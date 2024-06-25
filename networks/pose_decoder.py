@@ -33,19 +33,21 @@ class PoseDecoder(nn.Module):
         self.net = nn.ModuleList(list(self.convs.values()))
 
     def forward(self, input_features):
-        last_features = [f[-1] for f in input_features]
+        # 每组输入特征图的最后一个特征，单目视频输入只有一组特征图，所以后面的特征列表里，都只有一组特征
+        last_features = [f[-1] for f in input_features]# 12*512*6*20
 
-        cat_features = [self.relu(self.convs["squeeze"](f)) for f in last_features]
-        cat_features = torch.cat(cat_features, 1)
+        cat_features = [self.relu(self.convs["squeeze"](f)) for f in last_features]# 12*256*6*20，通道减半
+        cat_features = torch.cat(cat_features, 1)# 只有一个特征，相当于没拼接
 
         out = cat_features
+        # 12*256*6*20 -> 12*256*6*20 -> 12*12*6*20
         for i in range(3):
             out = self.convs[("pose", i)](out)
             if i != 2:
                 out = self.relu(out)
-
+        #  ->12*12, 对长和宽求平均值，维度被消除
         out = out.mean(3).mean(2)
-
+        # ->12*2*1*6，调整形状，-1表示自动计算
         out = 0.01 * out.view(-1, self.num_frames_to_predict_for, 1, 6)
 
         axisangle = out[..., :3]

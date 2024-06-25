@@ -12,7 +12,7 @@ import numpy as np
 import PIL.Image as pil
 
 from kitti_utils import generate_depth_map
-from .mono_dataset import MonoDataset
+from datasets.mono_dataset import MonoDataset
 
 
 class KITTIDataset(MonoDataset):
@@ -26,6 +26,11 @@ class KITTIDataset(MonoDataset):
         # by 1 / image_height. Monodepth2 assumes a principal point to be exactly centered.
         # If your principal point is far from the center you might need to disable the horizontal
         # flip augmentation.
+
+        # 注意：确保你的内参矩阵被原始图像尺寸归一化。
+        # 要进行归一化，你需要将第一行乘以1 / 图像宽度，第二行乘以1 / 图像高度。
+        # Monodepth2假设主点正好位于中心。
+        # 如果你的主点远离中心，你可能需要禁用水平翻转增强。
         self.K = np.array([[0.58, 0, 0.5, 0],
                            [0, 1.92, 0.5, 0],
                            [0, 0, 1, 0],
@@ -74,14 +79,14 @@ class KITTIRAWDataset(KITTIDataset):
             self.data_path,
             folder,
             "velodyne_points/data/{:010d}.bin".format(int(frame_index)))
-
+        # 使用激光雷达数据获取实际深度图
         depth_gt = generate_depth_map(calib_path, velo_filename, self.side_map[side])
         depth_gt = skimage.transform.resize(
             depth_gt, self.full_res_shape[::-1], order=0, preserve_range=True, mode='constant')
 
         if do_flip:
             depth_gt = np.fliplr(depth_gt)
-
+        # 返回一个375*1242的深度图
         return depth_gt
 
 

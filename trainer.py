@@ -6,6 +6,8 @@
 
 from __future__ import absolute_import, division, print_function
 
+from typing import Dict, Union
+
 import numpy as np
 import time
 
@@ -17,6 +19,7 @@ from tensorboardX import SummaryWriter
 
 import json
 
+from networks import ResnetEncoder, DepthDecoder, PoseCNN
 from utils import *
 from kitti_utils import *
 from layers import *
@@ -27,6 +30,8 @@ from IPython import embed
 
 
 class Trainer:
+    models: Dict[str, Union[ResnetEncoder, DepthDecoder, PoseCNN]]
+
     def __init__(self, options):
         self.opt = options
         self.log_path = os.path.join(self.opt.log_dir, self.opt.model_name)
@@ -47,7 +52,7 @@ class Trainer:
         assert self.opt.frame_ids[0] == 0, "frame_ids must start with 0"
 
         self.use_pose_net = not (self.opt.use_stereo and self.opt.frame_ids == [0])
-
+        #frameid 单目:[0,-1,1],双目:[0,s],mix[0,-1,1,s]:
         if self.opt.use_stereo:
             self.opt.frame_ids.append("s")
 
@@ -126,7 +131,7 @@ class Trainer:
 
         train_dataset = self.dataset(
             self.opt.data_path, train_filenames, self.opt.height, self.opt.width,
-            self.opt.frame_ids, 4, is_train=True, img_ext=img_ext)
+            self.opt.frame_ids, 4, is_train=True, img_ext=img_ext)#num_scales: 4
         self.train_loader = DataLoader(
             train_dataset, self.opt.batch_size, True,
             num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
@@ -193,7 +198,8 @@ class Trainer:
     def run_epoch(self):
         """Run a single epoch of training and validation
         """
-        self.model_lr_scheduler.step()
+        #
+
 
         print("Training")
         self.set_train()
@@ -224,6 +230,7 @@ class Trainer:
                 self.val()
 
             self.step += 1
+            self.model_lr_scheduler.step()
 
     def process_batch(self, inputs):
         """Pass a minibatch through the network and generate images and losses
@@ -322,10 +329,12 @@ class Trainer:
         """
         self.set_eval()
         try:
-            inputs = self.val_iter.next()
+            # inputs = self.val_iter.next()
+            inputs = next(self.val_iter)
         except StopIteration:
             self.val_iter = iter(self.val_loader)
-            inputs = self.val_iter.next()
+            # inputs = self.val_iter.next()
+            inputs = next(self.val_iter)
 
         with torch.no_grad():
             outputs, losses = self.process_batch(inputs)
@@ -390,12 +399,13 @@ class Trainer:
                     outputs[("color_identity", frame_id, scale)] = \
                         inputs[("color", frame_id, source_scale)]
 
+    # 重投影误差计算函数，pred[12,3,192,640],target[12,3,192,640],reprojection_loss[12,1,192,640]
     def compute_reprojection_loss(self, pred, target):
         """Computes reprojection loss between a batch of predicted and target images
         """
         abs_diff = torch.abs(target - pred)
         l1_loss = abs_diff.mean(1, True)
-
+        # 对dim1求平均值，消除一个维度
         if self.opt.no_ssim:
             reprojection_loss = l1_loss
         else:
@@ -467,7 +477,7 @@ class Trainer:
                 # add random numbers to break ties
                 identity_reprojection_loss += torch.randn(
                     identity_reprojection_loss.shape, device=self.device) * 0.00001
-
+                # 原始误差在前面，重投影误差在后面
                 combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)
             else:
                 combined = reprojection_loss
@@ -476,13 +486,13 @@ class Trainer:
                 to_optimise = combined
             else:
                 to_optimise, idxs = torch.min(combined, dim=1)
-
+            # 这里就是mask，idx索引为2或3时，说明重投影误差更小
             if not self.opt.disable_automasking:
                 outputs["identity_selection/{}".format(scale)] = (
                     idxs > identity_reprojection_loss.shape[1] - 1).float()
 
             loss += to_optimise.mean()
-
+            #disp：对应尺度的深度图，color: 对应尺度的源图像
             mean_disp = disp.mean(2, True).mean(3, True)
             norm_disp = disp / (mean_disp + 1e-7)
             smooth_loss = get_smooth_loss(norm_disp, color)

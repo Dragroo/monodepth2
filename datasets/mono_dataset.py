@@ -96,6 +96,7 @@ class MonoDataset(data.Dataset):
         """
         for k in list(inputs):
             frame = inputs[k]
+            # 如果是一个图像序列
             if "color" in k:
                 n, im, i = k
                 for i in range(self.num_scales):
@@ -111,6 +112,7 @@ class MonoDataset(data.Dataset):
     def __len__(self):
         return len(self.filenames)
 
+    # 每当枚举train_loader时，就会调用一次mono_dataset.py中的__getitem__()
     def __getitem__(self, index):
         """Returns a single training item from the dataset as a dictionary.
 
@@ -136,18 +138,21 @@ class MonoDataset(data.Dataset):
             3       images resized to (self.width // 8, self.height // 8)
         """
         inputs = {}
-
+        # 图像增强标志（随机）
         do_color_aug = self.is_train and random.random() > 0.5
+        # 水平翻转标志（随机）
         do_flip = self.is_train and random.random() > 0.5
-
+        # 读取splits.txt文件
         line = self.filenames[index].split()
+        # 以 2011_09_30/2011_09_30_drive_0020_sync 951 r 这行数据为例
+        # 读取第一列（文件名）
         folder = line[0]
-
+        # 读取frame_index
         if len(line) == 3:
             frame_index = int(line[1])
         else:
             frame_index = 0
-
+        # 左摄像头还是右摄像头
         if len(line) == 3:
             side = line[2]
         else:
@@ -161,11 +166,12 @@ class MonoDataset(data.Dataset):
                 inputs[("color", i, -1)] = self.get_color(folder, frame_index + i, side, do_flip)
 
         # adjusting intrinsics to match each scale in the pyramid
+        # num_scales=[0,1,2,3]
         for scale in range(self.num_scales):
             K = self.K.copy()
 
-            K[0, :] *= self.width // (2 ** scale)
-            K[1, :] *= self.height // (2 ** scale)
+            K[0, :] *= self.width // (2 ** scale) # 对第一行处理
+            K[1, :] *= self.height // (2 ** scale) # 对第二行处理
 
             inv_K = np.linalg.pinv(K)
 
@@ -173,10 +179,11 @@ class MonoDataset(data.Dataset):
             inputs[("inv_K", scale)] = torch.from_numpy(inv_K)
 
         if do_color_aug:
-            color_aug = transforms.ColorJitter.get_params(
-                self.brightness, self.contrast, self.saturation, self.hue)
+            color_aug = transforms.ColorJitter( self.brightness, self.contrast, self.saturation, self.hue)
+            # print(type(color_aug))
         else:
             color_aug = (lambda x: x)
+
 
         self.preprocess(inputs, color_aug)
 
@@ -186,7 +193,7 @@ class MonoDataset(data.Dataset):
 
         if self.load_depth:
             depth_gt = self.get_depth(folder, frame_index, side, do_flip)
-            inputs["depth_gt"] = np.expand_dims(depth_gt, 0)
+            inputs["depth_gt"] = np.expand_dims(depth_gt, 0)# 维度：1,375,1242
             inputs["depth_gt"] = torch.from_numpy(inputs["depth_gt"].astype(np.float32))
 
         if "s" in self.frame_idxs:
